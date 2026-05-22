@@ -1,0 +1,146 @@
+{
+  "architectures": [
+    {
+      "current_fallback": "local laptop classifier from handcrafted image features",
+      "implementation_status": "architecture_ready",
+      "input_size": "224x224x3",
+      "name": "EfficientNet-B4",
+      "recommended_loss": "weighted binary cross entropy",
+      "role": "classification"
+    },
+    {
+      "current_fallback": "pseudo-boxes can be derived from heuristic masks when needed",
+      "implementation_status": "annotation_required",
+      "input_size": "640x640x3",
+      "name": "YOLOv8",
+      "recommended_loss": "YOLO detection loss",
+      "role": "candidate crack detection"
+    },
+    {
+      "current_fallback": "heuristic crack segmentation marked as estimated",
+      "implementation_status": "mask_labels_required",
+      "input_size": "256x256x3 or 512x512x3",
+      "name": "U-Net",
+      "recommended_loss": "Dice loss + binary cross entropy",
+      "role": "pixel segmentation"
+    }
+  ],
+  "created_at": "2026-05-07T14:59:58.009704+00:00",
+  "current_outputs": {
+    "average_area_pct": 0.027454891227621903,
+    "average_length_px": 248.56317204301075,
+    "average_max_width_px": 11.534580690886385,
+    "average_mean_width_px": 5.885236762366129,
+    "average_severity_score": 0.548654171065471,
+    "localized_images": 6696
+  },
+  "measurement_mode": "heuristic_estimated_without_pixel_masks",
+  "performance_radar": {
+    "basis": "methodology reference baseline for UI comparison; replace with trained-model metrics when available",
+    "metrics": [
+      "accuracy",
+      "precision",
+      "recall",
+      "roc_auc",
+      "pr_auc",
+      "speed"
+    ],
+    "models": [
+      {
+        "metrics": {
+          "accuracy": 87,
+          "pr_auc": 85,
+          "precision": 78,
+          "recall": 88,
+          "roc_auc": 91,
+          "speed": 72
+        },
+        "model": "ResNet-50"
+      },
+      {
+        "metrics": {
+          "accuracy": 84,
+          "pr_auc": 80,
+          "precision": 75,
+          "recall": 82,
+          "roc_auc": 88,
+          "speed": 48
+        },
+        "model": "VGG-16"
+      },
+      {
+        "metrics": {
+          "accuracy": 89,
+          "pr_auc": 88,
+          "precision": 82,
+          "recall": 87,
+          "roc_auc": 93,
+          "speed": 86
+        },
+        "model": "EfficientNet-B0"
+      }
+    ],
+    "scale": "0-100 normalized score"
+  },
+  "segmentation_source": "heuristic_clahe_frangi_morphology",
+  "severity_basis": "pixel_estimate_unless_scale_mm_per_px_is_supplied",
+  "source_document": "docs/CODEX_CRACKNET_METHODOLOGY_INSTRUCTIONS.md",
+  "stages": [
+    {
+      "artifact": "manifest.csv",
+      "description": "SDNET2018 and upload project image provenance with dimensions, labels, and split metadata.",
+      "name": "Image Capture",
+      "order": 1,
+      "status": "implemented"
+    },
+    {
+      "artifact": "feature vectors and crack-likelihood maps",
+      "description": "Resize, grayscale statistics, texture features, CLAHE, dark-ridge response, and edge enhancement.",
+      "name": "Preprocessing",
+      "order": 2,
+      "status": "implemented"
+    },
+    {
+      "artifact": "predictions.csv",
+      "description": "Binary crack probability and confidence for every image.",
+      "name": "Crack Detection",
+      "order": 3,
+      "status": "implemented"
+    },
+    {
+      "artifact": "localization/masks/*.png",
+      "description": "Estimated pixel masks from morphology because SDNET2018 does not provide supervised masks.",
+      "name": "Crack Segmentation",
+      "order": 4,
+      "status": "heuristic_fallback"
+    },
+    {
+      "artifact": "localizations.csv",
+      "description": "Area, area percent, skeleton length, mean width, max width, polygons, and component counts.",
+      "name": "Measurement Engine",
+      "order": 5,
+      "status": "implemented"
+    },
+    {
+      "artifact": "severity_label and severity_score",
+      "description": "Pixel-estimated severity by default, with a calibration hook for mm-per-pixel thresholds.",
+      "name": "Severity Classification",
+      "order": 6,
+      "status": "implemented"
+    },
+    {
+      "artifact": "localization/overlays and heatmaps",
+      "description": "Polygon overlay, mask, and heatmap views for dataset and upload project inspection.",
+      "name": "Explainability",
+      "order": 7,
+      "status": "implemented"
+    },
+    {
+      "artifact": "summary.json, project.json, API responses",
+      "description": "Dataset dashboard and per-project reports returned through FastAPI and React.",
+      "name": "Final Inspection Output",
+      "order": 8,
+      "status": "implemented"
+    }
+  ]
+}
