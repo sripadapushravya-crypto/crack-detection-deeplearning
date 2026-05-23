@@ -10,7 +10,12 @@ from sdnet_pipeline.config import DEFAULT_DATASET_DIR, RAW_DIR, ensure_data_dirs
 DATASET_SLUG = "aniruddhsharma/structural-defects-network-concrete-crack-images"
 
 
-def link_or_copy_dataset(source: Path, destination: Path, copy: bool, force: bool) -> None:
+def link_or_copy_dataset(
+    source: Path,
+    destination: Path,
+    copy: bool,
+    force: bool,
+) -> None:
     if destination.exists() or destination.is_symlink():
         if not force:
             print(f"Dataset destination already exists: {destination}")
@@ -40,7 +45,9 @@ def download_dataset(destination: Path, copy: bool, force: bool) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download SDNET2018 from Kaggle via kagglehub.")
+    parser = argparse.ArgumentParser(
+        description="Download SDNET2018 from Kaggle via kagglehub."
+    )
     parser.add_argument("--destination", type=Path, default=DEFAULT_DATASET_DIR)
     parser.add_argument("--copy", action="store_true", help="Copy files instead of creating a symlink.")
     parser.add_argument("--force", action="store_true", help="Replace an existing destination.")

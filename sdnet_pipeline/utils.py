@@ -39,16 +39,9 @@ def infer_label(path: Path) -> str | None:
     compact = " ".join(tokens)
 
     negative_tokens = {
-        "u",
-        "ud",
-        "up",
-        "uw",
-        "uncracked",
-        "non_cracked",
-        "noncracked",
-        "no_crack",
-        "nocrack",
-        "negative",
+        "u", "ud", "up", "uw",
+        "uncracked", "non_cracked", "noncracked",
+        "no_crack", "nocrack", "negative",
     }
     positive_tokens = {"c", "cd", "cp", "cw", "cracked", "crack", "positive"}
 

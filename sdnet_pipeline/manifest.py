@@ -37,6 +37,7 @@ def assign_splits(df: pd.DataFrame, seed: int) -> pd.DataFrame:
     df = df.copy()
     df["split"] = "unassigned"
     labeled = df[df["target"].notna()].copy()
+
     if len(labeled) < 10 or labeled["target"].nunique() < 2:
         df.loc[labeled.index, "split"] = "train"
         return df
@@ -55,6 +56,7 @@ def assign_splits(df: pd.DataFrame, seed: int) -> pd.DataFrame:
     temp_stratify = temp["surface"].astype(str) + "_" + temp["target"].astype(int).astype(str)
     if temp_stratify.value_counts().min() < 2:
         temp_stratify = temp["target"].astype(int)
+
     if temp_stratify.value_counts().min() < 2 or len(temp) < 4:
         val_idx = temp.index[: len(temp) // 2]
         test_idx = temp.index[len(temp) // 2 :]
@@ -72,16 +74,22 @@ def assign_splits(df: pd.DataFrame, seed: int) -> pd.DataFrame:
     return df
 
 
-def build_manifest(dataset_dir: Path, output: Path, inspect_dimensions: bool, seed: int) -> pd.DataFrame:
+def build_manifest(
+    dataset_dir: Path,
+    output: Path,
+    inspect_dimensions: bool,
+    seed: int,
+) -> pd.DataFrame:
     ensure_data_dirs()
     if not dataset_dir.exists():
         raise FileNotFoundError(
-            f"Dataset directory not found: {dataset_dir}. Run scripts/download_data.sh or "
-            "scripts/make_demo_data.sh first."
+            f"Dataset directory not found: {dataset_dir}. "
+            "Run scripts/download_data.sh or scripts/make_demo_data.sh first."
         )
     df = discover_images(dataset_dir, inspect_dimensions=inspect_dimensions)
     if df.empty:
         raise RuntimeError(f"No images found under {dataset_dir}")
+
     df = assign_splits(df, seed=seed)
     output.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output, index=False)
@@ -116,6 +124,9 @@ def main() -> None:
         seed=args.seed,
     )
     print(f"Wrote manifest with {len(df):,} rows to {args.output}")
+    print(f"Labels  : {df['label'].fillna('unknown').value_counts().to_dict()}")
+    print(f"Surfaces: {df['surface'].value_counts().to_dict()}")
+    print(f"Splits  : {df['split'].value_counts().to_dict()}")
 
 
 if __name__ == "__main__":

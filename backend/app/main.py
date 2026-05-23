@@ -38,11 +38,18 @@ app = FastAPI(
     version="0.1.0",
 )
 
+import os
+allowed_origins = os.environ.get(
+    "ALLOWED_ORIGINS", 
+    "http://localhost:5173"
+).split(",")
+
+from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
+        "https://crack-detection-deeplearning-omega.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],

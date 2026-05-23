@@ -29,7 +29,6 @@ def draw_crack(image: Image.Image, rng: random.Random) -> None:
     draw = ImageDraw.Draw(image)
     width, height = image.size
     x = rng.randint(12, width - 12)
-    y = rng.randint(0, 20)
     points: list[tuple[int, int]] = []
     segments = rng.randint(5, 9)
     for step in range(segments):
@@ -42,7 +41,10 @@ def draw_crack(image: Image.Image, rng: random.Random) -> None:
     for x, y in points[1:-1:2]:
         branch_len = rng.randint(12, 36)
         angle = rng.uniform(-math.pi * 0.85, -math.pi * 0.15)
-        end = (int(x + math.cos(angle) * branch_len), int(y + math.sin(angle) * branch_len))
+        end = (
+            int(x + math.cos(angle) * branch_len),
+            int(y + math.sin(angle) * branch_len),
+        )
         draw.line([(x, y), end], fill=(45, 45, 45), width=1)
 
 
@@ -57,18 +59,23 @@ def add_obstructions(image: Image.Image, rng: random.Random) -> None:
         draw.rectangle((x0, y0, x1, y1), fill=(shade, shade, shade, rng.randint(18, 38)))
 
 
-def create_demo_dataset(destination: Path, images_per_class: int, force: bool, seed: int) -> None:
+def create_demo_dataset(
+    destination: Path,
+    images_per_class: int,
+    force: bool,
+    seed: int,
+) -> None:
     if destination.exists() and force:
         import shutil
-
         if destination.is_symlink() or destination.is_file():
             destination.unlink()
         else:
             shutil.rmtree(destination)
-    destination.mkdir(parents=True, exist_ok=True)
 
+    destination.mkdir(parents=True, exist_ok=True)
     rng = random.Random(seed)
     ensure_data_dirs()
+
     for surface_code in SURFACES:
         for class_code, cracked in [("C" + surface_code, True), ("U" + surface_code, False)]:
             folder = destination / surface_code / class_code
@@ -79,13 +86,18 @@ def create_demo_dataset(destination: Path, images_per_class: int, force: bool, s
                     draw_crack(image, rng)
                 if rng.random() < 0.35:
                     add_obstructions(image, rng)
-                image.save(folder / f"demo_{surface_code}_{class_code}_{idx:04d}.jpg", quality=92)
+                image.save(
+                    folder / f"demo_{surface_code}_{class_code}_{idx:04d}.jpg",
+                    quality=92,
+                )
 
     print(f"Demo dataset ready at: {destination}")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate a small synthetic SDNET-like demo dataset.")
+    parser = argparse.ArgumentParser(
+        description="Generate a small synthetic SDNET-like demo dataset."
+    )
     parser.add_argument("--destination", type=Path, default=DEFAULT_DATASET_DIR)
     parser.add_argument("--images-per-class", type=int, default=120)
     parser.add_argument("--force", action="store_true")

@@ -65,6 +65,18 @@ def create_model(
     n_estimators: int,
     max_depth: int | None,
 ) -> object:
+    """
+    Build a scikit-learn classifier.
+
+    ExtraTrees is the recommended choice. Key settings:
+    - class_weight="balanced"   — penalises missed cracks proportional to class imbalance
+    - min_samples_split=5       — prevents overfitting on noisy crack-like texture
+    - max_features="sqrt"       — de-correlates trees, improves generalisation
+    - min_samples_leaf=2        — minimum leaf size for stability
+
+    SGDClassifier always uses class_weight="balanced" via log-loss SVM.
+    RandomForest uses balanced_subsample to handle within-bag imbalance.
+    """
     if model_type == "sgd":
         return Pipeline(
             steps=[
@@ -87,6 +99,8 @@ def create_model(
             max_depth=max_depth,
             class_weight="balanced_subsample",
             min_samples_leaf=2,
+            min_samples_split=5,
+            max_features="sqrt",
             n_jobs=-1,
             random_state=seed,
         )
@@ -96,10 +110,12 @@ def create_model(
             max_depth=max_depth,
             class_weight="balanced",
             min_samples_leaf=2,
+            min_samples_split=5,      # prevents overfit on texture noise
+            max_features="sqrt",      # de-correlates trees, improves generalisation
             n_jobs=-1,
             random_state=seed,
         )
-    raise ValueError(f"Unsupported model_type: {model_type}")
+    raise ValueError(f"Unsupported model_type: {model_type!r}")
 
 
 def threshold_predictions(scores: np.ndarray, threshold: float) -> np.ndarray:
@@ -121,7 +137,7 @@ def threshold_metric_value(
         return float(precision_score(y_true, y_pred, zero_division=0))
     if metric == "recall":
         return float(recall_score(y_true, y_pred, zero_division=0))
-    raise ValueError(f"Unsupported threshold metric: {metric}")
+    raise ValueError(f"Unsupported threshold metric: {metric!r}")
 
 
 def tune_threshold(
@@ -130,8 +146,21 @@ def tune_threshold(
     metric: str,
     min_recall: float,
 ) -> dict[str, object]:
+    """
+    Grid search over [0.05, 0.95] to find the decision threshold that maximises
+    the chosen metric subject to a minimum recall constraint.
+
+    Tiebreaker: among equal-metric candidates prefer LOWER threshold (higher recall).
+    This is the correct engineering priority for structural inspection — missing a
+    crack (false negative) is more costly than a false alarm.
+
+    For structural inspection the recommended settings are:
+        metric      = "balanced_accuracy"
+        min_recall  = 0.70
+    """
     candidates = np.round(np.linspace(0.05, 0.95, 91), 2)
     rows: list[dict[str, float]] = []
+
     for threshold in candidates:
         y_pred = threshold_predictions(scores, threshold)
         recall = float(recall_score(y_true, y_pred, zero_division=0))
@@ -148,9 +177,13 @@ def tune_threshold(
 
     feasible = [row for row in rows if row["recall"] >= min_recall]
     if not feasible:
-        feasible = rows
+        # Relax to best-recall candidates if the floor is unachievable
+        max_recall = max(row["recall"] for row in rows)
+        feasible = [row for row in rows if row["recall"] >= max_recall * 0.95]
 
-    best = max(feasible, key=lambda row: (row[metric], row["recall"], row["threshold"]))
+    # Tiebreaker prefers LOWER threshold (higher recall) — correct for inspection
+    best = max(feasible, key=lambda row: (row[metric], row["recall"], -row["threshold"]))
+
     return {
         "metric": metric,
         "min_recall": float(min_recall),
@@ -160,10 +193,16 @@ def tune_threshold(
     }
 
 
-def split_metrics(model: object, df: pd.DataFrame, x: np.ndarray, threshold: float) -> dict[str, object]:
+def split_metrics(
+    model: object,
+    df: pd.DataFrame,
+    x: np.ndarray,
+    threshold: float,
+) -> dict[str, object]:
     y_true = df["target"].astype(int).to_numpy()
     y_score = model.predict_proba(x)[:, 1]
     y_pred = threshold_predictions(y_score, threshold)
+
     metrics: dict[str, object] = {
         "rows": int(len(df)),
         "threshold": float(threshold),
@@ -202,19 +241,36 @@ def train_model(
     max_depth: int | None,
 ) -> dict[str, object]:
     ensure_data_dirs()
+
     if threshold_metric not in THRESHOLD_METRICS:
         raise ValueError(f"--threshold-metric must be one of: {sorted(THRESHOLD_METRICS)}")
 
     df = pd.read_csv(manifest_path)
     df = df[df["target"].notna()].copy()
     df["target"] = df["target"].astype(int)
+
     if df["target"].nunique() < 2:
         raise RuntimeError("Training requires both cracked and non-cracked images.")
+
+    # Log class distribution so imbalance is visible in the run output
+    counts = df["target"].value_counts()
+    total = len(df)
+    crack_pct = 100.0 * counts.get(1, 0) / max(total, 1)
+    print(
+        f"Dataset: {total:,} images | "
+        f"cracked={counts.get(1, 0):,} ({crack_pct:.1f}%) | "
+        f"non_cracked={counts.get(0, 0):,} ({100 - crack_pct:.1f}%)"
+    )
+    print(
+        f"Threshold tuning: metric={threshold_metric}, min_recall={min_recall} "
+        f"(recommended for inspection: balanced_accuracy + min_recall=0.70)"
+    )
 
     df = sample_frame(df, sample_size=sample_size, seed=seed)
     train_df = df[df["split"] == "train"].copy()
     if train_df.empty:
         train_df = df.sample(frac=0.70, random_state=seed)
+
     eval_frames = {
         split: split_df.copy()
         for split, split_df in df.groupby("split")
@@ -266,10 +322,15 @@ def train_model(
         "decision_threshold": decision_threshold,
         "splits": {},
     }
+
     for split, split_df in eval_frames.items():
         if split == "train" and split_df.index.equals(train_df.index):
             x_split = x_train
-        elif split == "validation" and x_validation is not None and split_df.index.equals(validation_df.index):
+        elif (
+            split == "validation"
+            and x_validation is not None
+            and split_df.index.equals(validation_df.index)
+        ):
             x_split = x_validation
         else:
             x_split = extract_matrix(split_df, image_size=image_size, label=split)
@@ -279,7 +340,7 @@ def train_model(
     joblib.dump(
         {
             "model": model,
-            "feature_config": {"image_size": image_size, "version": "hog_lbp_edge_v2"},
+            "feature_config": {"image_size": image_size, "version": "hog_lbp_frangi_geo_v3"},
             "labels": {0: "non_cracked", 1: "cracked"},
             "decision_threshold": decision_threshold,
             "threshold_tuning": threshold_report,
@@ -297,7 +358,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--metrics-path", type=Path, default=DEFAULT_METRICS)
-    parser.add_argument("--sample-size", type=int, default=3000, help="0 means use all labeled images.")
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=3000,
+        help="0 means use all labeled images.",
+    )
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument(
         "--model-type",
@@ -308,17 +374,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--threshold-metric",
         choices=sorted(THRESHOLD_METRICS),
-        default="accuracy",
-        help="Metric optimized on validation scores to choose the prediction threshold.",
+        default="balanced_accuracy",
+        help=(
+            "Metric optimised on validation scores to select the decision threshold. "
+            "balanced_accuracy is recommended for structural inspection because the "
+            "dataset is imbalanced (~21%% cracked) and accuracy alone suppresses recall."
+        ),
     )
     parser.add_argument(
         "--min-recall",
         type=float,
-        default=0.0,
-        help="Optional lower bound for cracked-class recall during threshold tuning.",
+        default=0.70,
+        help=(
+            "Minimum cracked-class recall enforced during threshold tuning. "
+            "0.70 is the recommended floor for structural inspection — "
+            "missing cracks has higher engineering cost than false alarms."
+        ),
     )
     parser.add_argument("--n-estimators", type=int, default=350)
-    parser.add_argument("--max-depth", type=int, default=0, help="0 means unlimited tree depth.")
+    parser.add_argument("--max-depth", type=int, default=0, help="0 means unlimited depth.")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -338,21 +412,32 @@ def main() -> None:
         n_estimators=args.n_estimators,
         max_depth=args.max_depth or None,
     )
-    test_metrics = metrics.get("splits", {}).get("test") or metrics.get("splits", {}).get("validation")
-    print(f"Saved model to {args.model_path}")
+    test_metrics = (
+        metrics.get("splits", {}).get("test")
+        or metrics.get("splits", {}).get("validation")
+    )
+    print(f"Saved model  : {args.model_path}")
     print(
-        "Selected threshold: "
-        f"{metrics['decision_threshold']:.2f} "
-        f"(metric={args.threshold_metric}, source={metrics['threshold_source']})"
+        f"Threshold    : {metrics['decision_threshold']:.2f} "
+        f"(metric={args.threshold_metric}, min_recall={args.min_recall}, "
+        f"source={metrics['threshold_source']})"
     )
     if test_metrics:
+        cm = test_metrics.get("confusion_matrix", [])
+        tn = cm[0][0] if cm else "?"
+        fp = cm[0][1] if cm else "?"
+        fn = cm[1][0] if cm else "?"
+        tp = cm[1][1] if cm else "?"
         print(
-            "Evaluation: "
-            f"accuracy={test_metrics['accuracy']:.3f}, "
+            f"Evaluation   : accuracy={test_metrics['accuracy']:.3f}, "
             f"balanced_accuracy={test_metrics['balanced_accuracy']:.3f}, "
             f"precision={test_metrics['precision']:.3f}, "
             f"recall={test_metrics['recall']:.3f}, "
             f"f1={test_metrics['f1']:.3f}"
+        )
+        print(f"Confusion    : TN={tn}  FP={fp}  FN={fn}  TP={tp}")
+        print(
+            "              (FN = missed cracks — keep this low for safe inspection)"
         )
 
 
