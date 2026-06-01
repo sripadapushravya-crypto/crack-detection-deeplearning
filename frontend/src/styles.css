@@ -375,6 +375,13 @@ dt {
   font-size: 10px;
 }
 
+.radarBasis {
+  margin-top: 4px;
+  color: #7c867d;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
 .radarModel {
   fill-opacity: 0.16;
   stroke-width: 2;

@@ -145,7 +145,7 @@ def build_methodology_payload(summary_path: Path = DEFAULT_SUMMARY) -> dict[str,
         "stages": METHODOLOGY_STAGES,
         "architectures": MODEL_ARCHITECTURES,
         "performance_radar": {
-            "basis": "methodology reference baseline for UI comparison; replace with trained-model metrics when available",
+            "basis": "Illustrative reference baselines from the SDNET2018-adjacent literature for ResNet-50, VGG-16, and EfficientNet-B0; not trained or measured in this work and not directly comparable to the present results.",
             "scale": "0-100 normalized score",
             "metrics": ["accuracy", "precision", "recall", "roc_auc", "pr_auc", "speed"],
             "models": PERFORMANCE_RADAR,

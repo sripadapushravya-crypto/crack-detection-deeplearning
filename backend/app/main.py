@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shutil
 import uuid
@@ -38,12 +39,26 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Allowed browser origins. Defaults cover local dev plus the deployed Vercel
+# frontend; override in production with the FRONTEND_ORIGINS env var (comma-sep).
+_DEFAULT_ORIGINS = (
+    "http://localhost:5173,"
+    "http://127.0.0.1:5173,"
+    "https://crack-detection-deeplearning-omega.vercel.app"
+)
+FRONTEND_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("FRONTEND_ORIGINS", _DEFAULT_ORIGINS).split(",")
+    if origin.strip()
+]
+
+# Safety limits for the public, unauthenticated project-upload endpoint.
+MAX_UPLOAD_FILES = 20
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB per file
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=FRONTEND_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -226,6 +241,11 @@ async def create_project(
 ) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="Upload at least one image.")
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files: {len(files)} (max {MAX_UPLOAD_FILES} per project).",
+        )
 
     bundle = load_model_bundle()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -249,8 +269,18 @@ async def create_project(
 
         image_id = f"{project_id}_{index:04d}"
         destination = uploads_dir / f"{image_id}_{safe_token(Path(original_name).stem)}{suffix}"
+        written = 0
         with destination.open("wb") as handle:
-            shutil.copyfileobj(upload.file, handle)
+            while chunk := upload.file.read(1024 * 1024):
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    handle.close()
+                    destination.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"{original_name} exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB per-file limit.",
+                    )
+                handle.write(chunk)
 
         try:
             record = classify_uploaded_image(destination, image_id=image_id, bundle=bundle)
@@ -468,3 +498,7 @@ def prediction_artifact(image_id: str, artifact: str) -> FileResponse:
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"{artifact} file no longer exists: {path}")
     return FileResponse(path)
+
+@app.get("/")
+def root():
+    return {"message": "SDNET API is running"}

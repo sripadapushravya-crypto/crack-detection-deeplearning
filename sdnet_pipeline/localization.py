@@ -141,8 +141,10 @@ def segment_crack(
         min_component_length=min_component_length,
         min_elongation=min_elongation,
     )
-    mask = morphology.dilation(mask, morphology.disk(1))
-    mask = morphology.closing(mask, morphology.disk(1))
+    # Width is measured from THIS mask (skeleton + distance transform) in
+    # analyze_image. The earlier cosmetic dilation/closing inflated measured
+    # crack width by ~2 px, so it is removed; only enclosed pin-holes are filled
+    # to keep geometry faithful while the mask stays visible in the overlay.
     mask = morphology.remove_small_holes(mask, max_size=max(24, min_object_size))
     return mask.astype(bool), likelihood
 

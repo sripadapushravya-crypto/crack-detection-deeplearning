@@ -315,6 +315,7 @@ function DashboardPage({ onOpenUpload }) {
             <div>
               <h2>Performance Radar</h2>
               <p>{radar.scale || "0-100 normalized score"}</p>
+              {radar.basis && <p className="radarBasis">{radar.basis}</p>}
             </div>
           </div>
           <RadarChart radar={radar} />
