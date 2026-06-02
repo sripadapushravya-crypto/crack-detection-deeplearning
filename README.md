@@ -25,7 +25,7 @@ Important: SDNET2018 provides image-level crack labels, not pixel masks or bound
 ## Quick Start: Full Kaggle Processing on macOS
 
 ```bash
-cd /Users/prem/Documents/code_codex/SDNET
+cd /Users/shrav/Documents/code_codex/SDNET
 ./scripts/bootstrap.sh
 ./scripts/run_fresh_data_processing.sh \
   --download-mode copy \
