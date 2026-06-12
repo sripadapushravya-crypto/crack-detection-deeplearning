@@ -21,3 +21,22 @@ divergence.txt
 structure.txt
 .env
 .env.*
+
+# Model weights (too large for GitHub)
+models/
+*.pt
+*.pth
+*.pkl
+
+# CSV outputs (large data files)
+*.csv
+resnet18_test_predictions.csv
+
+# Backup files created during editing
+*.backup
+
+# Runtime project outputs
+projects/
+manual_inspection/
+thesis_figures/
+data/thesis_figures/
