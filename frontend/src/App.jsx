@@ -44,6 +44,27 @@ function titleLabel(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+// Show millimetres when the record is calibrated, otherwise pixels.
+function formatMeasure(px, mm, digits = 1) {
+  if (mm !== undefined && mm !== null && mm !== "") return `${number(mm, digits)} mm`;
+  if (px !== undefined && px !== null && px !== "") return `${number(px, digits)} px`;
+  return "n/a";
+}
+
+function formatArea(areaPct, areaMm2) {
+  if (areaPct === undefined || areaPct === null) return "n/a";
+  const base = pct(areaPct);
+  return areaMm2 !== undefined && areaMm2 !== null && areaMm2 !== ""
+    ? `${base} (${number(areaMm2, 1)} mm\u00b2)`
+    : base;
+}
+
+function scaleBasis(record) {
+  return record && record.scale_mm_per_px !== undefined && record.scale_mm_per_px !== null
+    ? `${number(record.scale_mm_per_px, 4)} mm/px \u00b7 ${record.scale_source || "manual"}`
+    : "none (pixel-domain)";
+}
+
 function bestSplit(metrics) {
   const splits = metrics?.splits || {};
   return splits.test ? ["test", splits.test] : splits.validation ? ["validation", splits.validation] : ["train", splits.train];
@@ -421,8 +442,8 @@ function DashboardPage({ onOpenUpload }) {
                     <td>{pct(row.crack_probability)}</td>
                     <td>{row.severity_label || "n/a"}</td>
                     <td>{row.crack_area_pct !== undefined && row.crack_area_pct !== null ? pct(row.crack_area_pct) : "n/a"}</td>
-                    <td>{row.crack_length_px ? `${number(row.crack_length_px, 0)} px` : "n/a"}</td>
-                    <td>{row.max_width_px ? `${number(row.mean_width_px, 1)} / ${number(row.max_width_px, 1)} px` : "n/a"}</td>
+                    <td>{row.crack_length_px ? formatMeasure(row.crack_length_px, row.crack_length_mm, 0) : "n/a"}</td>
+                    <td>{row.max_width_px ? (row.max_width_mm !== undefined && row.max_width_mm !== null ? `${number(row.mean_width_mm, 1)} / ${number(row.max_width_mm, 1)} mm` : `${number(row.mean_width_px, 1)} / ${number(row.max_width_px, 1)} px`) : "n/a"}</td>
                     <td>{pct(row.confidence)}</td>
                   </tr>
                 ))}
@@ -476,19 +497,23 @@ function DashboardPage({ onOpenUpload }) {
                 </div>
                 <div>
                   <dt>Crack Area</dt>
-                  <dd>{selected.crack_area_pct !== undefined && selected.crack_area_pct !== null ? pct(selected.crack_area_pct) : "n/a"}</dd>
+                  <dd>{formatArea(selected.crack_area_pct, selected.crack_area_mm2)}</dd>
                 </div>
                 <div>
                   <dt>Length</dt>
-                  <dd>{selected.crack_length_px ? `${number(selected.crack_length_px, 0)} px` : "n/a"}</dd>
+                  <dd>{formatMeasure(selected.crack_length_px, selected.crack_length_mm, 0)}</dd>
                 </div>
                 <div>
                   <dt>Mean Width</dt>
-                  <dd>{selected.mean_width_px ? `${number(selected.mean_width_px, 1)} px` : "n/a"}</dd>
+                  <dd>{formatMeasure(selected.mean_width_px, selected.mean_width_mm, 1)}</dd>
                 </div>
                 <div>
                   <dt>Max Width</dt>
-                  <dd>{selected.max_width_px ? `${number(selected.max_width_px, 1)} px` : "n/a"}</dd>
+                  <dd>{formatMeasure(selected.max_width_px, selected.max_width_mm, 1)}</dd>
+                </div>
+                <div>
+                  <dt>Scale</dt>
+                  <dd>{scaleBasis(selected)}</dd>
                 </div>
                 <div>
                   <dt>Components</dt>
@@ -516,6 +541,7 @@ function DashboardPage({ onOpenUpload }) {
 function ProjectUploadPage({ onOpenDashboard }) {
   const [projectName, setProjectName] = useState("Concrete Inspection Project");
   const [files, setFiles] = useState([]);
+  const [scale, setScale] = useState({ source: "none" });
   const [project, setProject] = useState(null);
   const [selected, setSelected] = useState(null);
   const [previewMode, setPreviewMode] = useState("overlay");
@@ -531,7 +557,7 @@ function ProjectUploadPage({ onOpenDashboard }) {
     setLoading(true);
     setError("");
     try {
-      const payload = await uploadProject(projectName, files);
+      const payload = await uploadProject(projectName, files, scale);
       setProject(payload);
       setSelected(payload.records?.[0] || null);
       setPreviewMode("overlay");
@@ -583,6 +609,68 @@ function ProjectUploadPage({ onOpenDashboard }) {
               onChange={(event) => setFiles(Array.from(event.target.files || []))}
             />
           </label>
+          <label>
+            Scale source
+            <select value={scale.source} onChange={(event) => setScale({ source: event.target.value })}>
+              <option value="none">None (report pixels)</option>
+              <option value="manual">Manual mm / pixel</option>
+              <option value="aruco">ArUco marker in frame</option>
+              <option value="geometry">Camera geometry (GSD)</option>
+            </select>
+          </label>
+          {scale.source === "manual" && (
+            <label>
+              mm per pixel
+              <input
+                type="number"
+                step="0.001"
+                value={scale.scale_mm_per_px || ""}
+                onChange={(event) => setScale({ ...scale, scale_mm_per_px: event.target.value })}
+              />
+            </label>
+          )}
+          {scale.source === "aruco" && (
+            <label>
+              Marker side length (mm)
+              <input
+                type="number"
+                step="0.1"
+                value={scale.marker_length_mm || ""}
+                onChange={(event) => setScale({ ...scale, marker_length_mm: event.target.value })}
+              />
+            </label>
+          )}
+          {scale.source === "geometry" && (
+            <>
+              <label>
+                Standoff distance (mm)
+                <input
+                  type="number"
+                  step="1"
+                  value={scale.distance_mm || ""}
+                  onChange={(event) => setScale({ ...scale, distance_mm: event.target.value })}
+                />
+              </label>
+              <label>
+                Focal length (mm)
+                <input
+                  type="number"
+                  step="0.1"
+                  value={scale.focal_length_mm || ""}
+                  onChange={(event) => setScale({ ...scale, focal_length_mm: event.target.value })}
+                />
+              </label>
+              <label>
+                Sensor width (mm)
+                <input
+                  type="number"
+                  step="0.1"
+                  value={scale.sensor_width_mm || ""}
+                  onChange={(event) => setScale({ ...scale, sensor_width_mm: event.target.value })}
+                />
+              </label>
+            </>
+          )}
           <button className="primaryButton" type="submit" disabled={loading || !files.length}>
             <UploadCloud size={18} />
             <span>{loading ? "Processing..." : `Process ${count(files.length)} Images`}</span>
@@ -632,8 +720,8 @@ function ProjectUploadPage({ onOpenDashboard }) {
                       <td>{pct(row.crack_probability)}</td>
                       <td>{row.severity_label || "n/a"}</td>
                       <td>{row.crack_area_pct !== undefined && row.crack_area_pct !== null ? pct(row.crack_area_pct) : "n/a"}</td>
-                      <td>{row.crack_length_px ? `${number(row.crack_length_px, 0)} px` : "n/a"}</td>
-                      <td>{row.mean_width_px ? `${number(row.mean_width_px, 1)} px` : "n/a"}</td>
+                      <td>{row.crack_length_px ? formatMeasure(row.crack_length_px, row.crack_length_mm, 0) : "n/a"}</td>
+                      <td>{row.mean_width_px ? formatMeasure(row.mean_width_px, row.mean_width_mm, 1) : "n/a"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -680,19 +768,23 @@ function ProjectUploadPage({ onOpenDashboard }) {
                     </div>
                     <div>
                       <dt>Area</dt>
-                      <dd>{selected.crack_area_pct !== undefined && selected.crack_area_pct !== null ? pct(selected.crack_area_pct) : "n/a"}</dd>
+                      <dd>{formatArea(selected.crack_area_pct, selected.crack_area_mm2)}</dd>
                     </div>
                     <div>
                       <dt>Length</dt>
-                      <dd>{selected.crack_length_px ? `${number(selected.crack_length_px, 0)} px` : "n/a"}</dd>
+                      <dd>{formatMeasure(selected.crack_length_px, selected.crack_length_mm, 0)}</dd>
                     </div>
                     <div>
                       <dt>Mean Width</dt>
-                      <dd>{selected.mean_width_px ? `${number(selected.mean_width_px, 1)} px` : "n/a"}</dd>
+                      <dd>{formatMeasure(selected.mean_width_px, selected.mean_width_mm, 1)}</dd>
                     </div>
                     <div>
                       <dt>Max Width</dt>
-                      <dd>{selected.max_width_px ? `${number(selected.max_width_px, 1)} px` : "n/a"}</dd>
+                      <dd>{formatMeasure(selected.max_width_px, selected.max_width_mm, 1)}</dd>
+                    </div>
+                    <div>
+                      <dt>Scale</dt>
+                      <dd>{scaleBasis(selected)}</dd>
                     </div>
                     <div>
                       <dt>Method</dt>

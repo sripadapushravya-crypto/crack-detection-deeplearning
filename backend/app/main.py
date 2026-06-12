@@ -156,6 +156,138 @@ def classify_uploaded_image(image_path: Path, image_id: str, bundle: dict[str, A
     }
 
 
+# ---------------------------------------------------------------------------
+# Deep-learning (CNN) classifier.
+#
+# If a fine-tuned CNN is present under models/cnn/ (produced by
+# scripts/train_cnn.py), the upload endpoint uses it in preference to the
+# classical ExtraTrees model. torch is imported lazily so the API still starts
+# where torch is not installed (it then falls back to the classical model). Run
+# the backend with `uv run --active ...` so the venv that has torch is used.
+# ---------------------------------------------------------------------------
+CNN_DIR = Path(os.environ.get("CNN_MODEL_DIR", "models/cnn"))
+_CNN_CACHE: dict[str, Any] | None = None
+
+
+def _build_cnn_architecture(tv_models: Any, backbone: str, num_classes: int) -> Any:
+    import torch.nn as nn
+
+    if backbone == "resnet18":
+        model = tv_models.resnet18(weights=None)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+    elif backbone == "resnet50":
+        model = tv_models.resnet50(weights=None)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+    elif backbone == "efficientnet_b0":
+        model = tv_models.efficientnet_b0(weights=None)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    elif backbone == "mobilenet_v2":
+        model = tv_models.mobilenet_v2(weights=None)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    else:
+        raise ValueError(f"Unsupported CNN backbone: {backbone}")
+    return model
+
+
+def load_cnn_classifier() -> dict[str, Any] | None:
+    """Load the fine-tuned CNN once, or return None if unavailable.
+
+    Returns None (so the caller falls back to the classical model) when the CNN
+    artifacts are missing or torch/torchvision are not installed.
+    """
+    global _CNN_CACHE
+    if _CNN_CACHE is not None:
+        return _CNN_CACHE
+
+    meta_path = CNN_DIR / "model_meta.json"
+    if not meta_path.exists():
+        return None
+    try:
+        import torch
+        from torchvision import models as tv_models
+        from torchvision import transforms as tv_transforms
+    except Exception:
+        return None
+
+    meta = json.loads(meta_path.read_text())
+    backbone = str(meta.get("backbone", "resnet18"))
+    num_classes = int(meta.get("num_classes", 2))
+    img_size = int(meta.get("img_size", 224))
+    norm = meta.get("normalization", {})
+    mean = norm.get("mean", [0.485, 0.456, 0.406])
+    std = norm.get("std", [0.229, 0.224, 0.225])
+    raw_labels = meta.get("class_to_label", {0: "non_cracked", 1: "cracked"})
+    class_to_label = {int(k): str(v) for k, v in raw_labels.items()}
+    threshold = float(meta.get("decision_threshold", 0.5))
+    checkpoint = CNN_DIR / str(meta.get("checkpoint", "best_model.pt"))
+    if not checkpoint.exists():
+        return None
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = _build_cnn_architecture(tv_models, backbone, num_classes)
+    model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
+    model.eval().to(device)
+
+    transform = tv_transforms.Compose(
+        [
+            tv_transforms.Resize((img_size, img_size)),
+            tv_transforms.ToTensor(),
+            tv_transforms.Normalize(mean, std),
+        ]
+    )
+
+    _CNN_CACHE = {
+        "torch": torch,
+        "model": model,
+        "device": device,
+        "transform": transform,
+        "class_to_label": class_to_label,
+        "decision_threshold": threshold,
+        "backbone": backbone,
+    }
+    return _CNN_CACHE
+
+
+def classify_uploaded_image_cnn(
+    image_path: Path, image_id: str, cnn: dict[str, Any]
+) -> dict[str, Any]:
+    torch = cnn["torch"]
+    model = cnn["model"]
+    device = cnn["device"]
+    transform = cnn["transform"]
+    class_to_label = cnn["class_to_label"]
+    threshold = cnn["decision_threshold"]
+
+    with Image.open(image_path) as image:
+        rgb = image.convert("RGB")
+        width, height = rgb.size
+        tensor = transform(rgb).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        logits = model(tensor)
+        crack_probability = float(torch.softmax(logits, dim=1)[0, 1].item())
+
+    predicted_target = int(crack_probability >= threshold)
+    predicted_label = class_to_label.get(predicted_target, "unknown")
+
+    return {
+        "image_id": image_id,
+        "path": str(image_path.resolve()),
+        "relative_path": image_path.name,
+        "label": None,
+        "target": None,
+        "surface": "uploaded",
+        "source_folder": "uploaded",
+        "width": int(width),
+        "height": int(height),
+        "predicted_target": predicted_target,
+        "predicted_label": predicted_label,
+        "crack_probability": crack_probability,
+        "confidence": crack_probability if predicted_target == 1 else 1.0 - crack_probability,
+        "classifier_type": cnn["backbone"],
+    }
+
+
 def project_path(project_id: str) -> Path:
     path = PROJECTS_DIR / project_id
     if not path.exists():
@@ -234,10 +366,48 @@ def list_projects() -> dict[str, Any]:
     return {"projects": projects}
 
 
+def build_scale_config(
+    scale_source: str,
+    scale_mm_per_px: float | None,
+    marker_length_mm: float | None,
+    aruco_dict: str,
+    distance_mm: float | None,
+    focal_length_mm: float | None,
+    sensor_width_mm: float | None,
+) -> dict[str, Any] | None:
+    """Translate the upload-form scale fields into a scale_config for the
+    localiser. Returns None (pixel-domain) when no usable scale is supplied."""
+    if scale_source == "manual" and scale_mm_per_px:
+        return {"source": "manual", "scale_mm_per_px": float(scale_mm_per_px)}
+    if scale_source == "aruco" and marker_length_mm:
+        return {
+            "source": "aruco",
+            "marker_length_mm": float(marker_length_mm),
+            "aruco_dict": aruco_dict or "DICT_4X4_50",
+        }
+    if scale_source == "geometry" and distance_mm and focal_length_mm and sensor_width_mm:
+        return {
+            "source": "geometry",
+            "distance_mm": float(distance_mm),
+            "focal_length_mm": float(focal_length_mm),
+            "sensor_width_mm": float(sensor_width_mm),
+        }
+    return None
+
+
 @app.post("/api/projects")
 async def create_project(
     name: str = Form("Concrete Inspection Project"),
     files: list[UploadFile] = File(...),
+    # Optional calibration scale for the whole batch. Absent => pixel-domain,
+    # exactly as before. See build_scale_config() above.
+    scale_source: str = Form("none"),
+    scale_mm_per_px: float | None = Form(None),
+    marker_length_mm: float | None = Form(None),
+    aruco_dict: str = Form("DICT_4X4_50"),
+    distance_mm: float | None = Form(None),
+    focal_length_mm: float | None = Form(None),
+    sensor_width_mm: float | None = Form(None),
 ) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="Upload at least one image.")
@@ -247,7 +417,8 @@ async def create_project(
             detail=f"Too many files: {len(files)} (max {MAX_UPLOAD_FILES} per project).",
         )
 
-    bundle = load_model_bundle()
+    cnn = load_cnn_classifier()
+    bundle = None if cnn is not None else load_model_bundle()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     project_id = f"project_{timestamp}_{uuid.uuid4().hex[:8]}"
     base_dir = PROJECTS_DIR / project_id
@@ -256,6 +427,18 @@ async def create_project(
     localization_dir = results_dir / "localization"
     uploads_dir.mkdir(parents=True, exist_ok=True)
     localization_dir.mkdir(parents=True, exist_ok=True)
+
+    # One calibration scale for the whole batch (images in a batch share a
+    # capture setup). None => measurements stay pixel-domain.
+    scale_config = build_scale_config(
+        scale_source,
+        scale_mm_per_px,
+        marker_length_mm,
+        aruco_dict,
+        distance_mm,
+        focal_length_mm,
+        sensor_width_mm,
+    )
 
     records: list[dict[str, Any]] = []
     localization_records: list[dict[str, Any]] = []
@@ -283,20 +466,28 @@ async def create_project(
                 handle.write(chunk)
 
         try:
-            record = classify_uploaded_image(destination, image_id=image_id, bundle=bundle)
+            if cnn is not None:
+                record = classify_uploaded_image_cnn(destination, image_id=image_id, cnn=cnn)
+            else:
+                record = classify_uploaded_image(destination, image_id=image_id, bundle=bundle)
             record["original_filename"] = original_name
-            if record["predicted_label"] == "cracked":
-                localization = analyze_image(
-                    pd.Series(record),
-                    output_dir=localization_dir,
-                    min_object_size=64,
-                    max_components=12,
-                    max_polygon_points=160,
-                    min_component_length=18,
-                    min_elongation=1.8,
-                )
-                record.update(localization)
-                localization_records.append(localization)
+            # Always run the geometry localiser (CLAHE + Frangi ridge + skeleton/
+            # distance transform), regardless of the classifier's verdict. The
+            # SDNET2018-trained classifier does not generalise to arbitrary field
+            # photos, but the ridge-based geometry does -- so this surfaces the
+            # heatmap and crack measurements for any uploaded image.
+            localization = analyze_image(
+                pd.Series(record),
+                output_dir=localization_dir,
+                min_object_size=64,
+                max_components=12,
+                max_polygon_points=160,
+                min_component_length=18,
+                min_elongation=1.8,
+                scale_config=scale_config,
+            )
+            record.update(localization)
+            localization_records.append(localization)
             records.append(record)
         except Exception as exc:
             records.append(

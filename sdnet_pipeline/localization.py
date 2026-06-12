@@ -194,6 +194,132 @@ def extract_polygons(mask: np.ndarray, max_components: int, max_polygon_points: 
     return polygons
 
 
+# ---------------------------------------------------------------------------
+# Scale calibration: pixels -> millimetres
+# ---------------------------------------------------------------------------
+# A pixel measurement only becomes a physical length once the image scale
+# (millimetres per pixel) is known. The scale can be recovered three ways, in
+# descending order of field trustworthiness:
+#   "aruco"    - a printed ArUco marker of known side length placed in frame;
+#                per-image and self-correcting when the camera distance changes.
+#   "geometry" - ground sample distance from camera standoff and intrinsics.
+#   "manual"   - an explicit, externally supplied mm-per-pixel constant
+#                (e.g. a one-time fixed-rig calibration).
+# When no scale is available the result is None and measurements stay
+# pixel-domain, exactly as before.
+
+
+def scale_from_reference_object(
+    image: Image.Image,
+    marker_length_mm: float,
+    aruco_dict: str = "DICT_4X4_50",
+) -> float | None:
+    """Millimetres-per-pixel from a square fiducial of known side length.
+
+    The marker is detected in the SAME working-resolution image whose cracks are
+    measured, so the returned scale is already in working-pixel units and needs
+    no resize adjustment. Returns None if OpenCV is unavailable or no marker is
+    found.
+    """
+    try:
+        import cv2  # optional dependency; only needed for marker calibration
+    except Exception:
+        return None
+
+    gray = np.asarray(image.convert("L"))
+    aruco = cv2.aruco
+    dictionary = aruco.getPredefinedDictionary(getattr(aruco, aruco_dict))
+    try:  # OpenCV >= 4.7 object API
+        detector = aruco.ArucoDetector(dictionary, aruco.DetectorParameters())
+        corners, ids, _ = detector.detectMarkers(gray)
+    except AttributeError:  # OpenCV < 4.7 functional API
+        corners, ids, _ = aruco.detectMarkers(gray, dictionary)
+
+    if ids is None or len(corners) == 0:
+        return None
+
+    # Average the four edge lengths of every detected marker, so the estimate is
+    # robust to mild perspective and detection noise.
+    edges_px: list[float] = []
+    for quad in corners:
+        pts = quad.reshape(4, 2)
+        edges_px.extend(float(np.linalg.norm(pts[i] - pts[(i + 1) % 4])) for i in range(4))
+    mean_side_px = float(np.mean(edges_px)) if edges_px else 0.0
+    if mean_side_px <= 0:
+        return None
+    return marker_length_mm / mean_side_px
+
+
+def scale_from_geometry(
+    distance_mm: float,
+    focal_length_mm: float,
+    sensor_width_mm: float,
+    image_width_px: int,
+) -> float | None:
+    """Millimetres-per-pixel (ground sample distance) from capture geometry.
+
+        s = (sensor_width_mm * distance_mm) / (focal_length_mm * image_width_px)
+
+    Assumes the sensor is roughly parallel to the surface. ``image_width_px`` is
+    the width of the ORIGINAL capture that the intrinsics describe.
+    """
+    if min(distance_mm, focal_length_mm, sensor_width_mm, image_width_px) <= 0:
+        return None
+    return (sensor_width_mm * distance_mm) / (focal_length_mm * image_width_px)
+
+
+def resolve_scale(
+    image: Image.Image,
+    scale_config: dict[str, Any] | None,
+    working_width_px: int,
+    original_width_px: int,
+) -> tuple[float | None, str]:
+    """Return (scale_mm_per_px, scale_source) expressed in WORKING pixels.
+
+    ``scale_config`` selects the method and carries its parameters, e.g.::
+
+        {"source": "aruco",    "marker_length_mm": 50.0, "aruco_dict": "DICT_4X4_50"}
+        {"source": "geometry", "distance_mm": 500, "focal_length_mm": 4.3,
+                               "sensor_width_mm": 6.4}
+        {"source": "manual",   "scale_mm_per_px": 0.18}   # refers to ORIGINAL capture
+
+    ArUco scales are measured on the working image and are exact. Geometry and
+    manual scales refer to the original capture resolution, so when an oversized
+    upload was downscaled they are divided by the resize factor (working pixels
+    are larger and therefore span more millimetres). Returns (None, "none") when
+    no scale can be resolved.
+    """
+    if not scale_config:
+        return None, "none"
+
+    source = scale_config.get("source", "none")
+    f = (working_width_px / original_width_px) if original_width_px else 1.0
+    f = f if f > 0 else 1.0
+
+    if source == "aruco":
+        s = scale_from_reference_object(
+            image,
+            marker_length_mm=float(scale_config["marker_length_mm"]),
+            aruco_dict=scale_config.get("aruco_dict", "DICT_4X4_50"),
+        )
+        return (s, "aruco") if s else (None, "none")
+
+    if source == "geometry":
+        s = scale_from_geometry(
+            distance_mm=float(scale_config["distance_mm"]),
+            focal_length_mm=float(scale_config["focal_length_mm"]),
+            sensor_width_mm=float(scale_config["sensor_width_mm"]),
+            image_width_px=int(original_width_px),
+        )
+        return (s / f, "geometry") if s else (None, "none")
+
+    if source == "manual":
+        s = scale_config.get("scale_mm_per_px")
+        return (float(s) / f, "manual") if s else (None, "none")
+
+    return None, "none"
+
+
 def severity_from_measurements(
     crack_area_pct: float,
     crack_length_px: float,
@@ -267,12 +393,33 @@ def analyze_image(
     max_polygon_points: int,
     min_component_length: int = 18,
     min_elongation: float = 1.8,
-    scale_mm_per_px: float | None = None,
+    scale_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     image_path = Path(str(row["path"]))
     image = Image.open(image_path).convert("RGB")
+    original_width_px = int(image.size[0])
+    # Real-life photos are often very large; the Frangi sigmas and component-size
+    # thresholds below are tuned for ~256-1024 px. Downscale oversized uploads so
+    # ridge detection works at a sensible scale and stays fast. SDNET images
+    # (~256 px) are unaffected.
+    _MAX_DIM = 1024
+    if max(image.size) > _MAX_DIM:
+        _resize = _MAX_DIM / max(image.size)
+        image = image.resize(
+            (max(1, round(image.size[0] * _resize)), max(1, round(image.size[1] * _resize))),
+            Image.LANCZOS,
+        )
     gray = util.img_as_float(np.asarray(image.convert("L")))
     width, height = image.size
+
+    # Recover the millimetre scale for THIS image (marker / geometry / manual),
+    # measured against the working resolution actually used for segmentation.
+    scale_mm_per_px, scale_source = resolve_scale(
+        image,
+        scale_config=scale_config,
+        working_width_px=width,
+        original_width_px=original_width_px,
+    )
 
     mask, likelihood = segment_crack(
         gray,
@@ -305,6 +452,9 @@ def analyze_image(
         scale_mm_per_px=scale_mm_per_px,
     )
 
+    # Area scales with the SQUARE of the linear scale, unlike length and width.
+    crack_area_mm2 = float(crack_area_px) * scale_mm_per_px ** 2 if scale_mm_per_px else None
+
     image_id = str(row["image_id"])
     overlay_path = output_dir / "overlays" / f"{image_id}.jpg"
     heatmap_path = output_dir / "heatmaps" / f"{image_id}.jpg"
@@ -326,6 +476,8 @@ def analyze_image(
         "mean_width_px": mean_width_px,
         "max_width_px": max_width_px,
         "scale_mm_per_px": scale_mm_per_px,
+        "scale_source": scale_source,
+        "crack_area_mm2": crack_area_mm2,
         "crack_length_mm": crack_length_px * scale_mm_per_px if scale_mm_per_px else None,
         "mean_width_mm": mean_width_px * scale_mm_per_px if scale_mm_per_px else None,
         "max_width_mm": max_width_px * scale_mm_per_px if scale_mm_per_px else None,
@@ -359,6 +511,17 @@ def summarize_localizations(df: pd.DataFrame, output_path: Path) -> dict[str, An
         "average_length_px": float(df["crack_length_px"].mean()),
         "average_mean_width_px": float(df["mean_width_px"].mean()),
         "average_max_width_px": float(df["max_width_px"].mean()),
+        **(
+            {
+                "average_mean_width_mm": float(df["mean_width_mm"].dropna().mean()),
+                "average_max_width_mm": float(df["max_width_mm"].dropna().mean()),
+            }
+            if "max_width_mm" in df and df["max_width_mm"].notna().any()
+            else {}
+        ),
+        "scale_sources": df["scale_source"].value_counts().to_dict()
+        if "scale_source" in df
+        else {"none": int(len(df))},
         "average_severity_score": float(df["severity_score"].mean()),
         "total_crack_area_px": int(df["crack_area_px"].sum()),
         "total_crack_length_px": float(df["crack_length_px"].sum()),
@@ -381,7 +544,7 @@ def run_localization(
     max_polygon_points: int,
     min_component_length: int,
     min_elongation: float,
-    scale_mm_per_px: float | None,
+    scale_config: dict[str, Any] | None,
     update_summary: bool,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     ensure_data_dirs()
@@ -403,7 +566,7 @@ def run_localization(
                     max_polygon_points=max_polygon_points,
                     min_component_length=min_component_length,
                     min_elongation=min_elongation,
-                    scale_mm_per_px=scale_mm_per_px,
+                    scale_config=scale_config,
                 )
             )
         except Exception as exc:
@@ -445,13 +608,56 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-components", type=int, default=12)
     parser.add_argument("--max-polygon-points", type=int, default=120)
     parser.add_argument(
+        "--scale-source",
+        choices=["none", "manual", "aruco", "geometry"],
+        default="none",
+        help="How to obtain the mm-per-pixel scale. 'none' keeps measurements pixel-domain.",
+    )
+    parser.add_argument(
         "--scale-mm-per-px",
         type=float,
         default=None,
-        help="Optional calibration scale. If omitted, severity remains pixel-estimated.",
+        help="Manual calibration scale (mm per pixel of the original capture). "
+        "Used when --scale-source manual, or as a bare back-compatible override.",
     )
+    parser.add_argument("--marker-length-mm", type=float, default=None,
+                        help="Physical side length of the ArUco fiducial (--scale-source aruco).")
+    parser.add_argument("--aruco-dict", default="DICT_4X4_50",
+                        help="OpenCV ArUco dictionary name (--scale-source aruco).")
+    parser.add_argument("--distance-mm", type=float, default=None,
+                        help="Camera-to-surface standoff in mm (--scale-source geometry).")
+    parser.add_argument("--focal-length-mm", type=float, default=None,
+                        help="Lens focal length in mm (--scale-source geometry).")
+    parser.add_argument("--sensor-width-mm", type=float, default=None,
+                        help="Camera sensor width in mm (--scale-source geometry).")
     parser.add_argument("--no-summary-update", action="store_true")
     return parser.parse_args()
+
+
+def build_scale_config(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Translate CLI arguments into a scale_config dict for resolve_scale()."""
+    source = args.scale_source
+    if source == "none":
+        # Back-compat: a bare --scale-mm-per-px still works as a manual scale.
+        if args.scale_mm_per_px:
+            return {"source": "manual", "scale_mm_per_px": args.scale_mm_per_px}
+        return None
+    if source == "manual":
+        return {"source": "manual", "scale_mm_per_px": args.scale_mm_per_px}
+    if source == "aruco":
+        return {
+            "source": "aruco",
+            "marker_length_mm": args.marker_length_mm,
+            "aruco_dict": args.aruco_dict,
+        }
+    if source == "geometry":
+        return {
+            "source": "geometry",
+            "distance_mm": args.distance_mm,
+            "focal_length_mm": args.focal_length_mm,
+            "sensor_width_mm": args.sensor_width_mm,
+        }
+    return None
 
 
 def main() -> None:
@@ -467,7 +673,7 @@ def main() -> None:
         max_polygon_points=args.max_polygon_points,
         min_component_length=args.min_component_length,
         min_elongation=args.min_elongation,
-        scale_mm_per_px=args.scale_mm_per_px,
+        scale_config=build_scale_config(args),
         update_summary=not args.no_summary_update,
     )
     print(f"Wrote {len(result):,} localizations to {args.output_path}")
