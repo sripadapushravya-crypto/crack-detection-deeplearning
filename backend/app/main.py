@@ -375,8 +375,6 @@ def build_scale_config(
     focal_length_mm: float | None,
     sensor_width_mm: float | None,
 ) -> dict[str, Any] | None:
-    """Translate the upload-form scale fields into a scale_config for the
-    localiser. Returns None (pixel-domain) when no usable scale is supplied."""
     if scale_source == "manual" and scale_mm_per_px:
         return {"source": "manual", "scale_mm_per_px": float(scale_mm_per_px)}
     if scale_source == "aruco" and marker_length_mm:
@@ -399,8 +397,6 @@ def build_scale_config(
 async def create_project(
     name: str = Form("Concrete Inspection Project"),
     files: list[UploadFile] = File(...),
-    # Optional calibration scale for the whole batch. Absent => pixel-domain,
-    # exactly as before. See build_scale_config() above.
     scale_source: str = Form("none"),
     scale_mm_per_px: float | None = Form(None),
     marker_length_mm: float | None = Form(None),
@@ -428,16 +424,9 @@ async def create_project(
     uploads_dir.mkdir(parents=True, exist_ok=True)
     localization_dir.mkdir(parents=True, exist_ok=True)
 
-    # One calibration scale for the whole batch (images in a batch share a
-    # capture setup). None => measurements stay pixel-domain.
     scale_config = build_scale_config(
-        scale_source,
-        scale_mm_per_px,
-        marker_length_mm,
-        aruco_dict,
-        distance_mm,
-        focal_length_mm,
-        sensor_width_mm,
+        scale_source, scale_mm_per_px, marker_length_mm,
+        aruco_dict, distance_mm, focal_length_mm, sensor_width_mm,
     )
 
     records: list[dict[str, Any]] = []
