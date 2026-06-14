@@ -119,10 +119,16 @@ def load_manifest() -> pd.DataFrame:
     return pd.read_csv(DEFAULT_MANIFEST)
 
 
-def load_model_bundle() -> dict[str, Any]:
+def load_model_bundle() -> dict[str, Any] | None:
+    """Load the Extra Trees model bundle. Returns None if not available
+    (e.g. on Render where only the CNN is deployed) so the CNN path
+    can proceed without raising a 404."""
     if not DEFAULT_MODEL.exists():
-        raise HTTPException(status_code=404, detail="Model not found. Run the data pipeline first.")
-    return joblib.load(DEFAULT_MODEL)
+        return None
+    try:
+        return joblib.load(DEFAULT_MODEL)
+    except Exception:
+        return None
 
 
 def classify_uploaded_image(image_path: Path, image_id: str, bundle: dict[str, Any]) -> dict[str, Any]:
@@ -415,6 +421,12 @@ async def create_project(
 
     cnn = load_cnn_classifier()
     bundle = None if cnn is not None else load_model_bundle()
+
+    if cnn is None and bundle is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No classifier model available. Deploy the CNN weights or run the data pipeline first.",
+        )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     project_id = f"project_{timestamp}_{uuid.uuid4().hex[:8]}"
     base_dir = PROJECTS_DIR / project_id
