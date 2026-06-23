@@ -5,18 +5,20 @@ description = "Local end-to-end SDNET2018 concrete crack detection proof of conc
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.111.0",
-  "uvicorn[standard]>=0.30.0",
-  "pandas>=2.2.0",
-  "numpy>=1.26.0",
-  "scikit-learn>=1.5.0",
-  "scikit-image>=0.24.0",
-  "pillow>=10.4.0",
-  "python-multipart>=0.0.9",
-  "joblib>=1.4.0",
-  "kagglehub>=0.3.0",
-  "tqdm>=4.66.0"
-]
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.5.0",
+    "scikit-image>=0.24.0",
+    "pillow>=10.4.0",
+    "python-multipart>=0.0.9",
+    "joblib>=1.4.0",
+    "kagglehub>=0.3.0",
+    "tqdm>=4.66.0",
+    "torch==2.1.0",
+    "torchvision==0.16.0"
+  ]
 
 [project.scripts]
 sdnet-download = "sdnet_pipeline.download:main"
