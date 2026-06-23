@@ -100,6 +100,5 @@ urllib3==2.6.3
 uvicorn==0.41.0
 watchdog==6.0.0
 wrapt==2.1.2
---find-links https://download.pytorch.org/whl/torch_stable.html
 torch==2.1.0
 torchvision==0.16.0
