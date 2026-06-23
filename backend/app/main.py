@@ -199,40 +199,59 @@ def load_cnn_classifier() -> dict[str, Any] | None:
     """Load the fine-tuned CNN once, or return None if unavailable.
 
     Returns None (so the caller falls back to the classical model) when the CNN
-    artifacts are missing or torch/torchvision are not installed.
+    artifacts are missing or torch/torchvision are not installed. Every failure
+    path logs the real exception so Render logs show the actual cause instead of
+    a silent None.
     """
     global _CNN_CACHE
     if _CNN_CACHE is not None:
         return _CNN_CACHE
 
     meta_path = CNN_DIR / "model_meta.json"
+    print(f"[cnn] CNN_DIR={CNN_DIR.resolve()}", flush=True)
+    print(f"[cnn] meta_path={meta_path.resolve()} exists={meta_path.exists()}", flush=True)
     if not meta_path.exists():
+        print("[cnn] model_meta.json not found -> returning None", flush=True)
         return None
     try:
         import torch
         from torchvision import models as tv_models
         from torchvision import transforms as tv_transforms
-    except Exception:
+        print(f"[cnn] torch={torch.__version__} cuda_available={torch.cuda.is_available()}", flush=True)
+    except Exception as exc:
+        print(f"[cnn] IMPORT FAILED: {type(exc).__name__}: {exc}", flush=True)
+        import traceback
+        traceback.print_exc()
         return None
 
-    meta = json.loads(meta_path.read_text())
-    backbone = str(meta.get("backbone", "resnet18"))
-    num_classes = int(meta.get("num_classes", 2))
-    img_size = int(meta.get("img_size", 224))
-    norm = meta.get("normalization", {})
-    mean = norm.get("mean", [0.485, 0.456, 0.406])
-    std = norm.get("std", [0.229, 0.224, 0.225])
-    raw_labels = meta.get("class_to_label", {0: "non_cracked", 1: "cracked"})
-    class_to_label = {int(k): str(v) for k, v in raw_labels.items()}
-    threshold = float(meta.get("decision_threshold", 0.5))
-    checkpoint = CNN_DIR / str(meta.get("checkpoint", "best_model.pt"))
-    if not checkpoint.exists():
-        return None
+    try:
+        meta = json.loads(meta_path.read_text())
+        backbone = str(meta.get("backbone", "resnet18"))
+        num_classes = int(meta.get("num_classes", 2))
+        img_size = int(meta.get("img_size", 224))
+        norm = meta.get("normalization", {})
+        mean = norm.get("mean", [0.485, 0.456, 0.406])
+        std = norm.get("std", [0.229, 0.224, 0.225])
+        raw_labels = meta.get("class_to_label", {0: "non_cracked", 1: "cracked"})
+        class_to_label = {int(k): str(v) for k, v in raw_labels.items()}
+        threshold = float(meta.get("decision_threshold", 0.5))
+        checkpoint = CNN_DIR / str(meta.get("checkpoint", "best_model.pt"))
+        print(f"[cnn] checkpoint={checkpoint.resolve()} exists={checkpoint.exists()}", flush=True)
+        if not checkpoint.exists():
+            print("[cnn] checkpoint file not found -> returning None", flush=True)
+            return None
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = _build_cnn_architecture(tv_models, backbone, num_classes)
-    model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
-    model.eval().to(device)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = _build_cnn_architecture(tv_models, backbone, num_classes)
+        state_dict = torch.load(checkpoint, map_location=device, weights_only=True)
+        model.load_state_dict(state_dict)
+        model.eval().to(device)
+        print("[cnn] model loaded and ready", flush=True)
+    except Exception as exc:
+        print(f"[cnn] BUILD/LOAD FAILED: {type(exc).__name__}: {exc}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return None
 
     transform = tv_transforms.Compose(
         [
@@ -421,8 +440,10 @@ async def create_project(
 
     cnn = load_cnn_classifier()
     bundle = None if cnn is not None else load_model_bundle()
+    print(f"[upload] cnn_loaded={cnn is not None} bundle_loaded={bundle is not None}", flush=True)
 
     if cnn is None and bundle is None:
+        print("[upload] 503 - no classifier available, see [cnn] logs above for the real cause", flush=True)
         raise HTTPException(
             status_code=503,
             detail="No classifier model available. Deploy the CNN weights or run the data pipeline first.",
