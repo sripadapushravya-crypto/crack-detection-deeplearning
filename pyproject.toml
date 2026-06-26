@@ -2,7 +2,7 @@
 name = "sdnet-local-poc"
 version = "0.1.0"
 description = "SDNET2018 concrete crack detection - local proof of concept"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
