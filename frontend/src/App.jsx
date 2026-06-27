@@ -172,7 +172,7 @@ function DashboardPage({ onOpenUpload }) {
       ]);
 
       const summaryPayload = summaryResult.status === "fulfilled" ? summaryResult.value : null;
-      const optionsPayload = optionsResult.status === "fulfilled" ? optionsResult.value : null;
+      const optionsPayload = optionsResult.status === "fulfilled" ? optionsResult.value : emptyOptions;
       const methodologyPayload = methodologyResult.status === "fulfilled" ? methodologyResult.value : null;
 
       setSummary(summaryPayload);
@@ -355,7 +355,7 @@ function DashboardPage({ onOpenUpload }) {
             Surface
             <select value={filters.surface} onChange={(event) => setFilters({ ...filters, surface: event.target.value })}>
               <option value="">All surfaces</option>
-              {options.surfaces.map((surface) => (
+              {(options?.surfaces || []).map((surface) => (
                 <option key={surface} value={surface}>
                   {surface}
                 </option>
@@ -369,7 +369,7 @@ function DashboardPage({ onOpenUpload }) {
               onChange={(event) => setFilters({ ...filters, predicted_label: event.target.value })}
             >
               <option value="">All predictions</option>
-              {options.predicted_labels.map((label) => (
+              {(options?.predicted_labels || []).map((label) => (
                 <option key={label} value={label}>
                   {label}
                 </option>
@@ -380,7 +380,7 @@ function DashboardPage({ onOpenUpload }) {
             Actual Label
             <select value={filters.actual_label} onChange={(event) => setFilters({ ...filters, actual_label: event.target.value })}>
               <option value="">All labels</option>
-              {options.actual_labels.map((label) => (
+              {(options?.actual_labels || []).map((label) => (
                 <option key={label} value={label}>
                   {label}
                 </option>
