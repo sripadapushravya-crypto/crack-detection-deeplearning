@@ -231,9 +231,12 @@ function DashboardPage({ onOpenUpload }) {
   ];
 
   const crackShare = useMemo(() => {
+    // predicted_labels/actual_labels/localization are computed on the held-out
+    // test split (test_rows), not the full dataset (rows) — dividing by the
+    // wrong denominator would silently produce a meaningless percentage.
     const cracked = Number(predictedLabels.cracked || 0);
-    const total = Number(summary?.summary?.rows || 0);
-    return total ? pct(cracked / total) : "n/a";
+    const testTotal = Number(summary?.summary?.test_rows ?? summary?.summary?.rows ?? 0);
+    return testTotal ? pct(cracked / testTotal) : "n/a";
   }, [predictedLabels, summary]);
 
   return (
@@ -272,9 +275,9 @@ function DashboardPage({ onOpenUpload }) {
       </section>
 
       <section className="statsGrid">
-        <Stat label="Images Processed" value={count(summary?.summary?.rows)} icon={Database} />
-        <Stat label="Predicted Crack Share" value={crackShare} icon={Activity} />
-        <Stat label="Localized Cracks" value={count(localization?.rows)} icon={ImageIcon} />
+        <Stat label="Images Processed (dataset)" value={count(summary?.summary?.rows)} icon={Database} />
+        <Stat label="Predicted Crack Share (test)" value={crackShare} icon={Activity} />
+        <Stat label="Localized Cracks (test)" value={count(localization?.rows)} icon={ImageIcon} />
         <Stat label={`${splitName || "Model"} F1`} value={pct(splitMetrics?.f1)} icon={BarChart3} />
       </section>
 

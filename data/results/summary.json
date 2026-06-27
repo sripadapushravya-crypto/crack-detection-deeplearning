@@ -1,5 +1,6 @@
 {
-  "rows": 8414,
+  "rows": 56092,
+  "test_rows": 8414,
   "predicted_labels": {
     "cracked": 1119,
     "non_cracked": 7295
@@ -10,5 +11,6 @@
   },
   "localization": {
     "rows": 1119
-  }
+  },
+  "scope_note": "rows is the full SDNET2018 dataset (train+val+test). predicted_labels, actual_labels, and localization.rows are computed on the held-out test split only (test_rows = 8414), matching the metrics in metrics.json."
 }
