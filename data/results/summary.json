@@ -1,57 +1,14 @@
 {
-  "actual_labels": {
-    "cracked": 8484,
-    "non_cracked": 47608
+  "rows": 8414,
+  "predicted_labels": {
+    "cracked": 1119,
+    "non_cracked": 7295
   },
-  "average_crack_probability": 0.1685108750368019,
-  "created_at": "2026-06-08T06:20:19.382299+00:00",
-  "decision_threshold": 0.26,
-  "feature_config": {
-    "image_size": 224,
-    "version": "hog_lbp_edge_v2"
+  "actual_labels": {
+    "cracked": 1272,
+    "non_cracked": 7142
   },
   "localization": {
-    "average_area_pct": 0.008685302734375,
-    "average_length_px": 153.6,
-    "average_max_width_mm": 1.2778334197998045,
-    "average_max_width_px": 7.0990745544433596,
-    "average_mean_width_mm": 0.608324197769165,
-    "average_mean_width_px": 3.379578876495361,
-    "average_severity_score": 0.38846744467018535,
-    "created_at": "2026-06-10T13:16:11.705338+00:00",
-    "localizations_path": "C:\\Users\\shrav\\Downloads\\SDNET\\sdnet-enhanced\\data\\results\\localizations.csv",
-    "measurement_method": "mask_skeleton_distance_transform",
-    "rows": 5,
-    "scale_sources": {
-      "manual": 5
-    },
-    "segmentation_source": "heuristic_clahe_frangi_morphology",
-    "severity_basis": [
-      "calibrated_mm"
-    ],
-    "severity_labels": {
-      "high": 5
-    },
-    "total_crack_area_px": 2846,
-    "total_crack_length_px": 768.0
-  },
-  "metrics_on_labeled_data": {
-    "accuracy": 0.9589959352492334,
-    "f1": 0.8484848484848485,
-    "precision": 0.961768219832736,
-    "recall": 0.759075907590759
-  },
-  "model_path": "C:\\Users\\shrav\\Downloads\\SDNET\\sdnet-enhanced\\data\\models\\crack_classifier.joblib",
-  "model_type": "extra_trees",
-  "predicted_labels": {
-    "cracked": 6696,
-    "non_cracked": 49396
-  },
-  "predictions_path": "C:\\Users\\shrav\\Downloads\\SDNET\\sdnet-enhanced\\data\\results\\predictions.csv",
-  "rows": 56092,
-  "surfaces": {
-    "bridge_deck": 13620,
-    "pavement": 24334,
-    "wall": 18138
+    "rows": 1119
   }
 }
