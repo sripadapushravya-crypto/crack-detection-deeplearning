@@ -1,0 +1,25 @@
+{
+  "average_area_pct": 0.008685302734375,
+  "average_length_px": 153.6,
+  "average_max_width_mm": 1.2778334197998045,
+  "average_max_width_px": 7.0990745544433596,
+  "average_mean_width_mm": 0.608324197769165,
+  "average_mean_width_px": 3.379578876495361,
+  "average_severity_score": 0.38846744467018535,
+  "created_at": "2026-06-10T13:16:11.705338+00:00",
+  "localizations_path": "C:\\Users\\shrav\\Downloads\\SDNET\\sdnet-enhanced\\data\\results\\localizations.csv",
+  "measurement_method": "mask_skeleton_distance_transform",
+  "rows": 5,
+  "scale_sources": {
+    "manual": 5
+  },
+  "segmentation_source": "heuristic_clahe_frangi_morphology",
+  "severity_basis": [
+    "calibrated_mm"
+  ],
+  "severity_labels": {
+    "high": 5
+  },
+  "total_crack_area_px": 2846,
+  "total_crack_length_px": 768.0
+}
